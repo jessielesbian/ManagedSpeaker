@@ -151,7 +151,7 @@ namespace jessielesbian.ManagedSpeaker
 						position = offset;
 						break;
 					case SeekOrigin.End:
-						if(offset >= length)
+						if(offset > length)
 						{
 							throw new IndexOutOfRangeException();
 						}
