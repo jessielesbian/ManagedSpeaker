@@ -273,13 +273,12 @@ namespace jessielesbian.ManagedSpeaker
 		static Utils()
 		{
 			string EXEPath = Assembly.GetAssembly(typeof(LargeMemoryStream)).Location;
-			dictionaryPath = EXEPath.Substring(0, EXEPath.LastIndexOf("\\")) + "\\Dictionary\\";
-			waveFormat = ConstructWord("nothing").WaveFormat;
+			dictionaryPath = EXEPath.Substring(0, EXEPath.LastIndexOf(Path.DirectorySeparatorChar)) + Path.DirectorySeparatorChar + "Dictionary" + Path.DirectorySeparatorChar;
 		}
 		public static readonly string dictionaryPath;
-		public static readonly SHA256 sha256 = SHA256CryptoServiceProvider.Create();
+		public static readonly SHA256 sha256 = SHA256.Create();
 		public static readonly GoogleKeyTokenGenerator googleKeyTokenGenerator = new GoogleKeyTokenGenerator();
-		public static readonly WaveFormat waveFormat;
+		public static WaveFormat WaveFormat { get; private set; }
 		public static List<ushort> To16BitWaveArray(this IWaveProvider waveProvider)
 		{
 			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveProvider.WaveFormat);
@@ -307,18 +306,47 @@ namespace jessielesbian.ManagedSpeaker
 		public static LargeMemoryStream ConstructWord(string word, int seed = 0)
 		{
 			word = word.ToLower();
-			FileStream fileStream = new FileStream(dictionaryPath + BitConverter.ToString(sha256.ComputeHash(Encoding.UTF8.GetBytes(word))).Replace("-", ""), FileMode.OpenOrCreate, FileAccess.ReadWrite);
+			FileStream fileStream;
+			while(true)
+			{
+				try
+				{
+					fileStream = new FileStream(dictionaryPath + BitConverter.ToString(sha256.ComputeHash(Encoding.UTF8.GetBytes(word))).Replace("-", ""), FileMode.OpenOrCreate, FileAccess.ReadWrite);
+					break;
+				} catch{
+					Thread.Sleep(1);
+				}
+			}
 			if(fileStream.Length == 0)
 			{
-				WebClient webClient = new WebClient();
-				Stream webStream = webClient.OpenRead("https://translate.google.com/translate_tts?ie=UTF-8&tl=en&total=1&idx=0&textlen=7&client=webapp&prev=input" + "&q=" + word + "&tk=" + Await(googleKeyTokenGenerator.GenerateAsync(word)));
-				webStream.CopyTo(fileStream);
-				webStream.Dispose();
+				LargeMemoryStream between = new LargeMemoryStream();
+				while(true)
+				{
+					int sleep = 1;
+					try
+					{
+						WebClient webClient = new WebClient();
+						Stream webStream = webClient.OpenRead("https://translate.google.com/translate_tts?ie=UTF-8&tl=en&total=1&idx=0&textlen=7&client=webapp&prev=input" + "&q=" + word + "&tk=" + Await(googleKeyTokenGenerator.GenerateAsync(word)));
+						webStream.CopyTo(between);
+						webStream.Dispose();
+						break;
+					} catch{
+						between.Dispose();
+						between = new LargeMemoryStream();
+						//QOS wait
+						sleep += 1;
+						Thread.Sleep(sleep);
+					}
+				}
+				between.Position = 0;
+				between.CopyTo(fileStream);
+				between.Flush();
 				fileStream.Position = 0;
 				fileStream.Flush();
 			}
 			MP3Stream stream = new MP3Stream(fileStream);
 			WaveFormat waveFormat = new WaveFormat(stream.Frequency, 2);
+			WaveFormat = waveFormat;
 			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveFormat);
 			stream.CopyTo(largeMemoryStream);
 			stream.Dispose();
@@ -349,7 +377,7 @@ namespace jessielesbian.ManagedSpeaker
 				right.RemoveAt(random.Next() % right.Count);
 			}
 			half = Math.Min(left.Count, right.Count);
-			removals = Math.Min(half / 5, removals);
+			removals = Math.Min(waveFormat.SampleRate, removals);
 			for(int i = 0; i < removals; i++)
 			{
 				left.RemoveAt(0);
@@ -392,7 +420,7 @@ namespace jessielesbian.ManagedSpeaker
 					largeMemoryStreams.Add(i, pending);
 				}
 			});
-			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveFormat);
+			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(WaveFormat);
 			for(int c = 0; c < length; c++) {
 				LargeMemoryStream temp = largeMemoryStreams[c];
 				string word = words[c];
