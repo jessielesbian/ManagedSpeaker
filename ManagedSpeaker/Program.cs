@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using GoogleTranslateFreeApi;
 using System.Net;
+using System.Collections;
 
 namespace jessielesbian.ManagedSpeaker
 {
@@ -73,8 +74,8 @@ namespace jessielesbian.ManagedSpeaker
 					Console.WriteLine("to say something");
 					Console.WriteLine("ManagedSpeaker SAY2SPK <thing>");
 					Console.WriteLine();
-					Console.WriteLine("to say something and then export it as MP3");
-					Console.WriteLine("ManagedSpeaker SAY2MP3 <output> <thing>");
+					Console.WriteLine("to say something and then export it as WAV");
+					Console.WriteLine("ManagedSpeaker SAY2WAV <output> <thing>");
 					Console.WriteLine();
 					Console.WriteLine("to run self test");
 					Console.WriteLine("ManagedSpeaker SelfTest");
@@ -143,7 +144,7 @@ namespace jessielesbian.ManagedSpeaker
 				switch(origin)
 				{
 					case SeekOrigin.Begin:
-						if(offset >= length)
+						if(offset > length)
 						{
 							throw new IndexOutOfRangeException();
 						}
@@ -158,7 +159,7 @@ namespace jessielesbian.ManagedSpeaker
 						break;
 					case SeekOrigin.Current:
 						position = position + offset;
-						if(position >= length)
+						if(position > length)
 						{
 							throw new IndexOutOfRangeException();
 						}
@@ -279,22 +280,6 @@ namespace jessielesbian.ManagedSpeaker
 		public static readonly SHA256 sha256 = SHA256CryptoServiceProvider.Create();
 		public static readonly GoogleKeyTokenGenerator googleKeyTokenGenerator = new GoogleKeyTokenGenerator();
 		public static readonly WaveFormat waveFormat;
-		public static List<float> ToMonoWaveArray(this IWaveProvider waveProvider)
-		{
-			LargeMemoryStream largeMemoryStream = new LargeMemoryStream();
-			waveProvider.CopyTo(largeMemoryStream);
-			largeMemoryStream.Position = 0;
-			int length = (int)largeMemoryStream.Length;
-			float[] floating = new float[length / 2];
-			largeMemoryStream.ToSampleProvider().ToMono().Read(floating, 0, length);
-			List<float> floats = new List<float>(length);
-			length = floating.Length;
-			for(int i = 0; i < length; i++)
-			{
-				floats.Add(floating[i]);
-			}
-			return floats;
-		}
 		public static List<ushort> To16BitWaveArray(this IWaveProvider waveProvider)
 		{
 			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveProvider.WaveFormat);
@@ -319,27 +304,7 @@ namespace jessielesbian.ManagedSpeaker
 			}
 			binaryWriter.Dispose();
 		}
-		public static void Append16BitMonoWaveArray(this GenericWaveBuffer genericWaveBuffer, List<float> floats)
-		{
-			int channels = genericWaveBuffer.WaveFormat.Channels;
-			int length = floats.Count;
-			MemoryStream memoryStream = new MemoryStream(length * 2); //since we know the exact size of our MemoryStream, we don't use LargeMemoryStream.
-			BinaryWriter binaryWriter = new BinaryWriter(memoryStream, Encoding.UTF8, true);
-			foreach(float f in floats)
-			{
-				float f1 = f;
-				ushort value = (ushort) Math.Floor(f * 65535.0f);
-				for(int i = 0; i < channels; i++)
-				{
-					binaryWriter.Write(value);
-				}
-			}
-			binaryWriter.Dispose();
-			memoryStream.Seek(0, SeekOrigin.Begin);
-			memoryStream.CopyTo(genericWaveBuffer);
-			memoryStream.Dispose();
-		}
-		public static LargeMemoryStream ConstructWord(string word)
+		public static LargeMemoryStream ConstructWord(string word, int seed = 0)
 		{
 			word = word.ToLower();
 			FileStream fileStream = new FileStream(dictionaryPath + BitConverter.ToString(sha256.ComputeHash(Encoding.UTF8.GetBytes(word))).Replace("-", ""), FileMode.OpenOrCreate, FileAccess.ReadWrite);
@@ -353,17 +318,55 @@ namespace jessielesbian.ManagedSpeaker
 				fileStream.Flush();
 			}
 			MP3Stream stream = new MP3Stream(fileStream);
-			WaveFormat waveFormat = new WaveFormat(stream.Frequency, stream.ChannelCount);
+			WaveFormat waveFormat = new WaveFormat(stream.Frequency, 2);
 			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveFormat);
 			stream.CopyTo(largeMemoryStream);
 			stream.Dispose();
 			fileStream.Dispose();
 			largeMemoryStream.Position = 0;
-			List<float> floats = largeMemoryStream.ToMonoWaveArray();
-			largeMemoryStream.Dispose();	
-			floats.RemoveAll((float f) => f == 0);
-			largeMemoryStream = new LargeMemoryStream(new WaveFormat(waveFormat.SampleRate, 1));
-			largeMemoryStream.Append16BitMonoWaveArray(floats);
+			List<ushort> shorts = largeMemoryStream.To16BitWaveArray();
+			largeMemoryStream.Dispose();
+			int length = shorts.Count;
+			int half = length / 2;
+			List<ushort> left = new List<ushort>(half);
+			List<ushort> right = new List<ushort>(half);
+			for(int i = 0; i < length; i++) {
+				if((i % 2) == 1)
+				{
+					left.Add(shorts[i]);
+				}
+				else
+				{
+					right.Add(shorts[i]);
+				}
+			}
+			half = Math.Min(left.Count, right.Count);
+			Random random = new Random(seed);
+			int removals = (int)Math.Ceiling(Math.Sqrt(half));
+			for(int i = 0; i < removals; i++)
+			{
+				left.RemoveAt(random.Next() % left.Count);
+				right.RemoveAt(random.Next() % right.Count);
+			}
+			half = Math.Min(left.Count, right.Count);
+			removals = Math.Min(half / 5, removals);
+			for(int i = 0; i < removals; i++)
+			{
+				left.RemoveAt(0);
+				right.RemoveAt(0);
+				left.RemoveAt(left.Count - 1);
+				right.RemoveAt(right.Count - 1);
+			}
+			half = Math.Min(left.Count, right.Count);
+			length = half * 2;
+			shorts = new List<ushort>(length);
+			for(int i = 0; i < half; i++)
+			{
+				shorts.Add(right[i]);
+				shorts.Add(left[i]);
+			}
+			largeMemoryStream = new LargeMemoryStream(waveFormat);
+			largeMemoryStream.Append16BitWaveArray(shorts);
 			largeMemoryStream.Position = 0;
 			return largeMemoryStream;
 		}
@@ -379,35 +382,36 @@ namespace jessielesbian.ManagedSpeaker
 		public static LargeMemoryStream Speak(string text)
 		{
 			string[] words = text.Split(' ');
-			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveFormat);
-			foreach(string word in words) {
-				LargeMemoryStream temp = ConstructWord(word.Replace(".", "").Replace(",", ""));
-				List<ushort> waveArray = temp.To16BitWaveArray();
-				int count = waveArray.Count;
-				Random random = new Random(temp.GetHashCode());
-				int removals = (int) Math.Floor(Math.Min(Math.Pow(random.NextDouble() * count, 2), Math.Sqrt(count)));
-				for(int i = 0; i < removals; i++)
+			int seed = text.GetHashCode();
+			int length = words.Length;
+			Dictionary<int, LargeMemoryStream> largeMemoryStreams = new Dictionary<int, LargeMemoryStream>(length);
+			Parallel.For(0, length, (int i) => {
+				LargeMemoryStream pending = ConstructWord(words[i].Replace(".", "").Replace(",", ""), seed + i);
+				lock(largeMemoryStreams)
 				{
-					waveArray.RemoveAt(random.Next() % waveArray.Count);
+					largeMemoryStreams.Add(i, pending);
 				}
-				largeMemoryStream.Append16BitWaveArray(waveArray);
+			});
+			LargeMemoryStream largeMemoryStream = new LargeMemoryStream(waveFormat);
+			for(int c = 0; c < length; c++) {
+				LargeMemoryStream temp = largeMemoryStreams[c];
+				string word = words[c];
+				temp.CopyTo(largeMemoryStream);
+				temp.Dispose();
 				if(word.EndsWith("."))
 				{
-					for(int i = 0; i < 25000; i++)
+					for(int i = 0; i < 100000; i++)
 					{
-						largeMemoryStream.WriteByte(0);
 						largeMemoryStream.WriteByte(0);
 					}
 				}
 				else if(word.EndsWith(","))
 				{
-					for(int i = 0; i < 15000; i++)
+					for(int i = 0; i < 50000; i++)
 					{
-						largeMemoryStream.WriteByte(0);
 						largeMemoryStream.WriteByte(0);
 					}
 				}
-				temp.Dispose();
 			}
 			largeMemoryStream.Position = 0;
 			return largeMemoryStream;
