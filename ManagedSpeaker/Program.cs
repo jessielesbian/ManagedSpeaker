@@ -51,12 +51,98 @@ namespace jessielesbian.ManagedSpeaker
 						goto default;
 					}
 					LargeMemoryStream largeMemoryStream = Utils.Speak(args[2]);
-					FileStream fileStream = new FileStream(args[1], FileMode.Create, FileAccess.Write);
+					FileStream fileStream;
+					try
+					{
+						fileStream = new FileStream(args[1], FileMode.Create, FileAccess.Write);
+					}
+					catch
+					{
+						Console.WriteLine("ERROR: unable to create output file!");
+						break;
+					}
 					WaveFileWriter waveFileWriter = new WaveFileWriter(fileStream, largeMemoryStream.WaveFormat);
 					largeMemoryStream.CopyTo(waveFileWriter);
 					largeMemoryStream.Dispose();
 					waveFileWriter.Flush();
 					waveFileWriter.Dispose();
+					break;
+				case "AdvancedSAY2WAV":
+					if(length != 5)
+					{
+						goto default;
+					}
+					int volume = 0;
+					try
+					{
+						volume = Convert.ToInt32(args[1]);
+					}
+					catch
+					{
+						Console.WriteLine("Volume MUST be a number in the range 0-65535.");
+						break;
+					}
+					if(volume < 0 || volume > 65535)
+					{
+						Console.WriteLine("Volume MUST be a number in the range 0-65535.");
+					}
+					else
+					{
+						int pitcho = 0;
+						try
+						{
+							pitcho = Convert.ToInt32(args[2]);
+						}
+						catch
+						{
+							Console.WriteLine("Pitch offset MUST be a number in the range 0-65535.");
+							break;
+						}
+						if(pitcho < 0 || pitcho > 65536)
+						{
+							Console.WriteLine("Pitch offset MUST be a number in the range 0-65535.");
+						}
+						else
+						{
+							largeMemoryStream = Utils.Speak(args[4]);
+							List<ushort> shorts = largeMemoryStream.To16BitWaveArray();
+							largeMemoryStream.Dispose();
+							int length1 = shorts.Count;
+							for(int i = 0; i < length1; i++)
+							{
+								ushort sort = shorts[i];
+								try
+								{
+									sort += (ushort) volume;
+								}
+								catch
+								{
+									Console.WriteLine("[ERROR] Volume too high!");
+									return;
+								}
+								shorts[i] = sort;
+							}
+							shorts.RemoveAll((ushort sorte) => sorte < pitcho);
+							largeMemoryStream = new LargeMemoryStream(Utils.WaveFormat);
+							largeMemoryStream.Append16BitWaveArray(shorts);
+							largeMemoryStream.Position = 0;
+							try
+							{
+								fileStream = new FileStream(args[3], FileMode.Create, FileAccess.Write);
+							}
+							catch
+							{
+								Console.WriteLine("ERROR: unable to create output file!");
+								break;
+							}
+							waveFileWriter = new WaveFileWriter(fileStream, largeMemoryStream.WaveFormat);
+							largeMemoryStream.CopyTo(waveFileWriter);
+							waveFileWriter.Flush();
+							fileStream.Flush();
+							waveFileWriter.Dispose();
+							fileStream.Dispose();
+						}
+					}
 					break;
 				case "RMWORD":
 					if(length != 2)
@@ -76,6 +162,8 @@ namespace jessielesbian.ManagedSpeaker
 					Console.WriteLine();
 					Console.WriteLine("to say something and then export it as WAV");
 					Console.WriteLine("ManagedSpeaker SAY2WAV <output> <thing>");
+					Console.WriteLine("or");
+					Console.WriteLine("ManagedSpeaker AdvancedSAY2WAV <volume> <pitch-offset> <output> <thing>");
 					Console.WriteLine();
 					Console.WriteLine("to run self test");
 					Console.WriteLine("ManagedSpeaker SelfTest");
@@ -329,6 +417,7 @@ namespace jessielesbian.ManagedSpeaker
 						Stream webStream = webClient.OpenRead("https://translate.google.com/translate_tts?ie=UTF-8&tl=en&total=1&idx=0&textlen=7&client=webapp&prev=input" + "&q=" + word + "&tk=" + Await(googleKeyTokenGenerator.GenerateAsync(word)));
 						webStream.CopyTo(between);
 						webStream.Dispose();
+						webClient.Dispose();
 						break;
 					} catch{
 						between.Dispose();
