@@ -95,12 +95,12 @@ namespace jessielesbian.ManagedSpeaker
 						}
 						catch
 						{
-							Console.WriteLine("Pitch offset MUST be a number in the range 0-65535.");
+							Console.WriteLine("Pitch offset MUST be a number in the range 0-100.");
 							break;
 						}
 						if(pitcho < 0 || pitcho > 65536)
 						{
-							Console.WriteLine("Pitch offset MUST be a number in the range 0-65535.");
+							Console.WriteLine("Pitch offset MUST be a number in the range 0-100.");
 						}
 						else
 						{
@@ -122,7 +122,9 @@ namespace jessielesbian.ManagedSpeaker
 								}
 								shorts[i] = sort;
 							}
-							shorts.RemoveAll((ushort sorte) => sorte < pitcho);
+							Random random = new Random(args.GetHashCode());
+							int removals = (int) Math.Floor(Math.Sqrt((shorts.Count / 100.0) * pitcho));
+							shorts = Utils.Larker(shorts, removals);
 							largeMemoryStream = new LargeMemoryStream(Utils.WaveFormat);
 							largeMemoryStream.Append16BitWaveArray(shorts);
 							largeMemoryStream.Position = 0;
@@ -390,6 +392,55 @@ namespace jessielesbian.ManagedSpeaker
 				binaryWriter.Write(wave);
 			}
 			binaryWriter.Dispose();
+		}
+		public static List<ushort> Larker(List<ushort> shorts, int removals)
+		{
+			shorts = new List<ushort>(shorts.ToArray());
+			int length = shorts.Count;
+			int half = length / 2;
+			List<ushort> left = new List<ushort>(half);
+			List<ushort> right = new List<ushort>(half);
+			for(int i = 0; i < length; i++)
+			{
+				if((i % 2) == 1)
+				{
+					left.Add(shorts[i]);
+				}
+				else
+				{
+					right.Add(shorts[i]);
+				}
+			}
+			half = Math.Min(left.Count, right.Count);
+			Random random = new Random(shorts.GetHashCode());
+			for(int i = 0; i < removals; i++)
+			{
+				int remove = random.Next() % half;
+				half = Math.Min(left.Count, right.Count);
+				int action = random.Next() % 3;
+				switch(action) {
+					case 0:
+						left.RemoveAt(remove);
+						break;
+					case 1:
+						right.RemoveAt(remove);
+						break;
+					default:
+						left.RemoveAt(remove);
+						right.RemoveAt(remove);
+						break;
+				}
+
+			}
+			half = Math.Min(left.Count, right.Count);
+			length = half * 2;
+			shorts = new List<ushort>(length);
+			for(int i = 0; i < half; i++)
+			{
+				shorts.Add(right[i]);
+				shorts.Add(left[i]);
+			}
+			return shorts;
 		}
 		public static LargeMemoryStream ConstructWord(string word, int seed = 0)
 		{
